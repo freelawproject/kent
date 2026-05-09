@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, ClassVar
+
+import httpx
 
 from kent.data_types import BaseScraper, DriverRequirement
 
@@ -87,6 +90,79 @@ REQUIREMENT_TO_PROVIDED_PREP: dict[DriverRequirement, str] = {
     DriverRequirement.HCAPTCHA_SOLVER: HCaptchaSolver.provider_name,
     DriverRequirement.IMAGE_CAPTCHA_SOLVER: ImageCaptchaSolver.provider_name,
 }
+
+
+class WordImageCaptcha(ImageCaptchaSolver):
+    """ImageCaptchaSolver that posts the image to an external OCR service.
+
+    The service is expected to accept an HTTP POST to ``server_url`` with
+    the image bytes attached as multipart form-data under field name
+    ``image``, and to respond with the recognized text as the plain-text
+    response body. ``thebes/resolve.py`` (a SmolVLM-Instruct wrapper) is
+    a working reference implementation; any equivalent service works.
+
+    The prep accepts two kwargs at the yield site:
+    - ``image_url``: URL of the captcha image to fetch.
+    - ``result_field``: form-data key to populate with the answer.
+
+    Example yield site::
+
+        yield HTTPRequestPrep(
+            Request(
+                request=HTTPRequestParams(
+                    method=HttpMethod.POST,
+                    url="https://example.com/login",
+                    data={"mode": "edit", "embedded": token, "task": "DOCKET"},
+                ),
+                continuation=self.parse_search_page,
+            ),
+            prep_method="provided.image_captcha_solver",
+            image_url="https://example.com/captcha.png?session=abc",
+            result_field="captchaEntry",
+        )
+    """
+
+    def __init__(self, server_url: str) -> None:
+        """
+        Args:
+            server_url: Resolver endpoint that accepts a POST with the
+                image as multipart form-data (field name ``image``) and
+                returns the recognized text as the plain-text body.
+        """
+        self.server_url = server_url
+
+    async def prep(
+        self,
+        response: Response,
+        request: BaseRequest,
+        **kwargs: Any,
+    ) -> BaseRequest:
+        try:
+            image_url: str = kwargs["image_url"]
+            result_field: str = kwargs["result_field"]
+        except KeyError as e:
+            raise TypeError(
+                "WordImageCaptcha.prep requires kwargs "
+                "'image_url' and 'result_field'"
+            ) from e
+
+        async with httpx.AsyncClient() as client:
+            img_resp = await client.get(image_url)
+            img_resp.raise_for_status()
+            image_bytes = img_resp.content
+
+            files = {"image": ("captcha.png", image_bytes, "image/png")}
+            solver_resp = await client.post(self.server_url, files=files)
+            solver_resp.raise_for_status()
+            answer = solver_resp.text.strip()
+
+        existing = request.request.data
+        existing_dict: dict[str, Any] = (
+            dict(existing) if isinstance(existing, dict) else {}
+        )
+        new_data = {**existing_dict, result_field: answer}
+        new_http = replace(request.request, data=new_data)
+        return replace(request, request=new_http)
 
 
 def build_provided_preps(

@@ -1052,6 +1052,168 @@ async def handle_fake_solver(request: web.Request) -> web.Response:
     return web.json_response({"answer": answer})
 
 
+# ---------------------------------------------------------------------------
+# Michigan-style hCaptcha mock
+#
+# Mirrors how courts.michigan.gov gates its case-detail JSON: an SPA page
+# that loads ``window.hcaptcha`` with an async ``execute`` method, and an
+# API endpoint that requires the JWT it produces in a ``captchatoken``
+# request header. The "JWT" here is just a fixed string the page-side
+# script returns so tests stay deterministic.
+# ---------------------------------------------------------------------------
+
+_MICH_MOCK_TOKEN = "mich-mock-jwt-payload"
+
+
+async def handle_mich_mock_case_page(request: web.Request) -> web.Response:
+    """GET /mich-mock/case/{id} — SPA page with an hcaptcha.execute stub.
+
+    Stands in for ``/c/courts/coa/case/{id}`` on the real site. A
+    ``JSRequestPrep`` running on this page can call
+    ``window.hcaptcha.execute({async: true})`` and get back the same
+    shape the real SDK returns: ``{response: <jwt>, key: <sitekey>}``.
+    """
+    case_id = request.match_info["id"]
+    html = f"""<html>
+<head><title>Mich mock case {case_id}</title></head>
+<body>
+<h1>Case {case_id}</h1>
+<script>
+window.hcaptcha = {{
+    execute: async function(opts) {{
+        return {{
+            response: "{_MICH_MOCK_TOKEN}",
+            key: "9bf9cc63-9d2e-4f54-98f8-8d3063233b9c"
+        }};
+    }}
+}};
+</script>
+</body>
+</html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
+async def handle_mich_mock_case_api(request: web.Request) -> web.Response:
+    """GET /mich-mock/api/case/{id} — captcha-gated case-detail JSON."""
+    case_id = request.match_info["id"]
+    if request.headers.get("captchatoken") != _MICH_MOCK_TOKEN:
+        return web.json_response(
+            {"error": "Captcha validation failed."}, status=403
+        )
+    return web.json_response(
+        {
+            "caseId": case_id,
+            "title": f"Mock case {case_id}",
+            "captchaPassed": True,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Utah-style word-image captcha mock
+#
+# Mirrors apps.utcourts.gov/CourtsPublicWEB/LoginServlet: a login form with
+# a captcha image, a hidden ``embedded`` token, and a free-text captcha
+# input field. ``/utah-mock/resolve`` stands in for the SmolVLM-Instruct
+# resolver service ``thebes/resolve.py`` — POST an image, get the text back.
+# ---------------------------------------------------------------------------
+
+# Each captcha "image" is keyed by an ``embedded`` token; the bytes the
+# image endpoint serves *are* the answer string, and the resolver maps
+# image bytes → answer trivially. Both keep the test deterministic.
+_UTAH_MOCK_TOKENS: dict[str, str] = {"sess-abc": "ZX9KQ2"}
+
+
+async def handle_utah_mock_login_page(
+    request: web.Request,
+) -> web.Response:
+    """GET /utah-mock/login — Utah-style login HTML."""
+    token = "sess-abc"
+    html = f"""<html>
+<head><title>Utah mock login</title></head>
+<body>
+<form id="loginForm" action="/utah-mock/login-submit" method="post">
+  <input type="hidden" name="mode" value="edit"/>
+  <input type="hidden" name="embedded" value="{token}"/>
+  <img id="captcha-img" src="/utah-mock/captcha-image/{token}" />
+  <input type="text" name="captchaEntry" maxlength="6"/>
+  <select name="task">
+    <option value="DOCKET" selected>Search Appellate Case Dockets</option>
+  </select>
+  <button type="submit">Login</button>
+</form>
+</body>
+</html>"""
+    return web.Response(text=html, content_type="text/html")
+
+
+async def handle_utah_mock_captcha_image(
+    request: web.Request,
+) -> web.Response:
+    """GET /utah-mock/captcha-image/{token} — returns answer bytes-as-image."""
+    token = request.match_info["token"]
+    answer = _UTAH_MOCK_TOKENS.get(token)
+    if answer is None:
+        return web.Response(status=404)
+    # The "image" is the answer string encoded; the mock resolver decodes
+    # it back. A real OCR service would do real recognition.
+    return web.Response(body=answer.encode(), content_type="image/png")
+
+
+async def handle_utah_mock_login_submit(
+    request: web.Request,
+) -> web.Response:
+    """POST /utah-mock/login-submit — validates captcha, returns search HTML."""
+    data = await request.post()
+    token = str(data.get("embedded") or "")
+    entered = str(data.get("captchaEntry") or "")
+    expected = _UTAH_MOCK_TOKENS.get(token)
+    if expected is None or entered != expected:
+        return web.Response(
+            text=(
+                "<html><body>"
+                "<div class='alert'>The characters you entered did not "
+                "match the image. Please try again.</div>"
+                "</body></html>"
+            ),
+            content_type="text/html",
+            status=200,
+        )
+    task = str(data.get("task") or "")
+    return web.Response(
+        text=(
+            "<html><body>"
+            f"<h1 id='search-page'>Appellate Case Docket Search</h1>"
+            f"<div id='task'>{task}</div>"
+            "</body></html>"
+        ),
+        content_type="text/html",
+    )
+
+
+async def handle_utah_mock_resolve(request: web.Request) -> web.Response:
+    """POST /utah-mock/resolve — stand-in for thebes/resolve.py.
+
+    Accepts multipart form-data with an ``image`` field; the body is
+    just the answer string (see ``handle_utah_mock_captcha_image``),
+    so we read it back and return it as plain text.
+    """
+    reader = await request.multipart()
+    while True:
+        field = await reader.next()
+        if field is None:
+            break
+        if field.name in ("image", "file"):
+            body = await field.read(decode=False)
+            return web.Response(
+                text=body.decode("utf-8", errors="ignore"),
+                content_type="text/plain",
+            )
+    return web.Response(
+        text="missing image upload", status=400, content_type="text/plain"
+    )
+
+
 def create_app() -> web.Application:
     """Create the aiohttp application with all routes.
 
@@ -1094,6 +1256,18 @@ def create_app() -> web.Application:
     app.router.add_get("/captcha/image/{token}", handle_captcha_image)
     app.router.add_post("/captcha/submit", handle_captcha_submit)
     app.router.add_post("/fake-solver", handle_fake_solver)
+    # Michigan-style hCaptcha mock (SPA case page + gated detail API)
+    app.router.add_get("/mich-mock/case/{id}", handle_mich_mock_case_page)
+    app.router.add_get("/mich-mock/api/case/{id}", handle_mich_mock_case_api)
+    # Utah-style word-image captcha mock + resolver stub
+    app.router.add_get("/utah-mock/login", handle_utah_mock_login_page)
+    app.router.add_get(
+        "/utah-mock/captcha-image/{token}", handle_utah_mock_captcha_image
+    )
+    app.router.add_post(
+        "/utah-mock/login-submit", handle_utah_mock_login_submit
+    )
+    app.router.add_post("/utah-mock/resolve", handle_utah_mock_resolve)
 
     # Catch-all: any unmatched GET returns 200 with a placeholder body so
     # tests that hit arbitrary URLs (priority/stop/lifecycle suites) don't

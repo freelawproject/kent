@@ -990,6 +990,15 @@ class PlaywrightDriver(
             else:
                 # Non-archive: navigate and snapshot HTML
 
+                # Propagate Request.headers to the upcoming navigation via
+                # set_extra_http_headers. We always call it (with the
+                # request's headers, or {} for none) so headers from a
+                # previous request on this reused worker page never leak
+                # forward.
+                await page.set_extra_http_headers(
+                    request.request.headers or {}
+                )
+
                 # Navigate: route-intercept parent's cached page then via,
                 # or navigate directly
                 nav_error: (

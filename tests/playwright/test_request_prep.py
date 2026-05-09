@@ -95,12 +95,11 @@ class TestJSRequestPrepScraperMethod:
                 self, response: Response, request: BaseRequest, page: Any
             ) -> BaseRequest:
                 token = await page.evaluate("() => window.getSwizzleToken()")
-                # Playwright's page.goto drops per-request headers, so
-                # this prep bakes the token into the URL query string
-                # for the test. Real-world JS preps that rely on headers
-                # would target nonnav-via-httpx or use route interception.
-                new_url = f"{request.request.url}?swizzle={token}"
-                new_http = replace(request.request, url=new_url)
+                new_headers = {
+                    **(request.request.headers or {}),
+                    "X-Swizzled": token,
+                }
+                new_http = replace(request.request, headers=new_headers)
                 return replace(request, request=new_http)
 
             def parse_api(
@@ -135,8 +134,11 @@ class _StubHCaptchaSolver(HCaptchaSolver):
         page: Any,
     ) -> BaseRequest:
         token = await page.evaluate("() => window.getSwizzleToken()")
-        new_url = f"{request.request.url}?swizzle={token}"
-        new_http = replace(request.request, url=new_url)
+        new_headers = {
+            **(request.request.headers or {}),
+            "X-Swizzled": token,
+        }
+        new_http = replace(request.request, headers=new_headers)
         return replace(request, request=new_http)
 
 
@@ -229,7 +231,8 @@ class TestKwargsPassedToPrep:
                     Request(
                         request=HTTPRequestParams(
                             method=HttpMethod.GET,
-                            url=f"{self.base}/swizzle/api?swizzle=kent-test-token",
+                            url=f"{self.base}/swizzle/api",
+                            headers={"X-Swizzled": "kent-test-token"},
                         ),
                         continuation="parse_api",
                         nonnavigating=True,

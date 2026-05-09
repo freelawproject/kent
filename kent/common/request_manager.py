@@ -31,6 +31,7 @@ from kent.data_types import (
     BaseScraper,
     DriverRequirement,
     Response,
+    TimeoutType,
 )
 
 if TYPE_CHECKING:
@@ -38,6 +39,30 @@ if TYPE_CHECKING:
     from http.cookiejar import CookieJar
 
     from pyrate_limiter import Limiter, Rate
+
+
+def _httpx_timeout(timeout: TimeoutType) -> Any:
+    """Translate kent's TimeoutType to httpx's per-request timeout.
+
+    When ``timeout`` is ``None`` we return ``USE_CLIENT_DEFAULT`` so the
+    client-level timeout is preserved; passing ``None`` directly would
+    instead disable the timeout for this request.
+    """
+    if timeout is None:
+        return httpx.USE_CLIENT_DEFAULT
+    if isinstance(timeout, tuple):
+        connect, read = timeout
+        return httpx.Timeout(read, connect=connect)
+    return timeout
+
+
+def _timeout_seconds_for_error(timeout: TimeoutType) -> float:
+    """Best-effort numeric timeout for RequestTimeoutException reporting."""
+    if isinstance(timeout, int | float):
+        return float(timeout)
+    if isinstance(timeout, tuple):
+        return float(timeout[1])
+    return 30.0
 
 
 def _classify_and_raise(
@@ -337,10 +362,14 @@ class SyncRequestManager:
                 if isinstance(http_params.data, dict)
                 else None,
                 follow_redirects=self._follow_redirects,
+                timeout=_httpx_timeout(http_params.timeout),
             )
         except httpx.TimeoutException:
             raise RequestTimeoutException(
-                url=http_params.url, timeout_seconds=30
+                url=http_params.url,
+                timeout_seconds=_timeout_seconds_for_error(
+                    http_params.timeout
+                ),
             )
 
         _classify_and_raise(
@@ -398,6 +427,7 @@ class SyncRequestManager:
                 if isinstance(http_params.data, dict)
                 else None,
                 follow_redirects=self._follow_redirects,
+                timeout=_httpx_timeout(http_params.timeout),
             ) as http_response:
                 _classify_and_raise(
                     self._scraper,
@@ -409,7 +439,10 @@ class SyncRequestManager:
                 yield SyncStreamingResponse(http_response, http_params.url)
         except httpx.TimeoutException:
             raise RequestTimeoutException(
-                url=http_params.url, timeout_seconds=30
+                url=http_params.url,
+                timeout_seconds=_timeout_seconds_for_error(
+                    http_params.timeout
+                ),
             )
 
 
@@ -611,11 +644,14 @@ class AsyncRequestManager:
                 content=content_param,
                 data=data_param,
                 follow_redirects=self._follow_redirects,
+                timeout=_httpx_timeout(http_params.timeout),
             )
         except httpx.TimeoutException:
             raise RequestTimeoutException(
                 url=http_params.url,
-                timeout_seconds=30,
+                timeout_seconds=_timeout_seconds_for_error(
+                    http_params.timeout
+                ),
             )
 
         _classify_and_raise(
@@ -675,6 +711,7 @@ class AsyncRequestManager:
                 content=content_param,
                 data=data_param,
                 follow_redirects=self._follow_redirects,
+                timeout=_httpx_timeout(http_params.timeout),
             ) as http_response:
                 _classify_and_raise(
                     self._scraper,
@@ -687,5 +724,7 @@ class AsyncRequestManager:
         except httpx.TimeoutException:
             raise RequestTimeoutException(
                 url=http_params.url,
-                timeout_seconds=30,
+                timeout_seconds=_timeout_seconds_for_error(
+                    http_params.timeout
+                ),
             )
