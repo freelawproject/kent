@@ -39,7 +39,26 @@ class MyScraper(BaseScraper[MyData]):
     driver_requirements = [DriverRequirement.JS_EVAL, DriverRequirement.FF_ALIKE]
 ```
 
-Values: `JS_EVAL`, `FF_ALIKE`, `CHROME_ALIKE`, `HCAP_HANDLER` (hCaptcha), `RCAP_HANDLER` (reCAPTCHA).
+Common values:
+
+- `JS_EVAL` — needs a JS-evaluating browser engine
+- `FF_ALIKE` — needs a Firefox-family engine
+- `CHROME_ALIKE` — needs a Chromium-family engine
+- `HCAP_HANDLER` — visible hCaptcha widget (`div.h-captcha`); does **not**
+  cover invisible / execute-mode hCaptcha (token-as-header) — see the
+  patterns appendix in SKILL.md for that case
+- `RCAP_HANDLER` — reCAPTCHA
+
+Site-specific values seen in existing scrapers:
+
+- `H11_HEADER_FIXES` — HTTP/1.1 header normalization quirks (Alaska)
+- `FOLLOW_REDIRECTS` — explicit redirect-following (Alaska)
+
+The kent source is the canonical list. To see all members:
+
+```bash
+grep -A 30 "class DriverRequirement" $(python -c "import kent, os; print(os.path.dirname(kent.__file__))")/data_types.py
+```
 
 If the scraper yields multiple top-level types, use a union:
 `BaseScraper[Docket | OralArgument]`.
@@ -103,6 +122,28 @@ Step options:
 - `json_model: str | None` — dotted path to Pydantic model for JSON response validation (e.g. `"api.responses.SearchResult"`)
 - `auto_await_timeout: int | None` — timeout in ms for Playwright autowait retry logic
 - `await_list: list | None` — wait conditions for Playwright (WaitForSelector, WaitForLoadState, WaitForURL, WaitForTimeout)
+
+---
+
+## Response
+
+The `response` parameter in step functions:
+
+| Field | Type | Notes |
+|---|---|---|
+| `status_code` | `int` | HTTP status code |
+| `headers` | `dict[str, str]` | Response headers |
+| `url` | `str` | **Final URL after redirects.** Use this to detect redirect-based soft-404s (compare against the requested URL). |
+| `text` | `str` | Response body decoded as text |
+| `content` | `bytes` | Raw response body bytes |
+
+The Playwright driver follows redirects. The persistent driver (httpx/default) only follows redirects if the FOLLOW_REDIRECTS DriverRequirement is specified.
+
+The kent source is canonical for the full dataclass:
+
+```bash
+grep -A 30 "class Response" $(python -c "import kent, os; print(os.path.dirname(kent.__file__))")/data_types.py
+```
 
 ---
 
