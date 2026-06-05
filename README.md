@@ -78,6 +78,10 @@ make html           # Build HTML docs to docs/build/html/
 make livehtml       # Auto-rebuilding dev server on port 8001
 ```
 
+## Development
+
+This repo uses pre-commit to run lints and tests locally, and Github Actions to verify the same for PRs.
+
 ## I just want to parse one page
 
 Use `single_page` to run a `@step` method without a driver or HTTP server:
