@@ -13,6 +13,7 @@ wheels/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.pyre/
 
 # OS files
 .DS_Store
@@ -20,5 +21,7 @@ wheels/
 # Dev driver databases
 *.db
 
-# Lock file
-uv.lock
+.coverage
+.hypothesis
+.claude/settings.json
+.playwright-mcp
