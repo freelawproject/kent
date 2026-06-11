@@ -5,15 +5,146 @@ requires = [
 ]
 
 [project]
-name = "kent"
+name = "jkent"
 version = "0.1.0"
 description = "Scraper-driver framework for structured web scraping"
 readme = "README.md"
 requires-python = ">=3.10"
+# The main dependency group is the scraper SDK: everything jkent.common +
+# jkent.data_types need, and nothing more, so that importing jkent into
+# juriscraper pulls no driver/database machinery. Driver runtime deps live
+# in the `operational` extra below.
 dependencies = [
+    "pydantic>=2.12.5",
+    "lxml>=5.2",
+    # used via lxml's .cssselect()
+    "cssselect",
+    "pyrate-limiter>=3.9.0",
+]
+authors = [{ name = "Free Law Project" }]
+license = "BSD-2-Clause"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.10",
+]
+
+[project.urls]
+homepage = "https://github.com/freelawproject/kent"
+source = "https://github.com/freelawproject/kent"
+issues = "https://github.com/freelawproject/kent/issues"
+
+[project.optional-dependencies]
+# Everything needed to actually run drivers (database engine, transports,
+# browsers). CourtListener installs jkent[operational]; juriscraper doesn't.
+operational = [
+    "sqlmodel>=0.0.32",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.22.1",
+    "alembic>=1.13",
+    "httpx[socks,http2]>=0.28.1",
+    # Pinned: jkent monkey-patches h11._headers.normalize_and_validate
+    # (gated on the H11_HEADER_FIXES driver requirement) and relies on
+    # h11's internal API. Bumps must re-verify the patch.
+    "h11==0.16.0",
+    "zstandard>=0.25.0",
+    "playwright>=1.57.0",
+    "camoufox[geoip]>=0.4.0",
 ]
 
 [dependency-groups]
 dev = [
+    "jkent[operational]",
+    "pytest",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.8.0",
+    "mypy>=1.19.0",
+    "types-lxml>=2025.11.25",
+    "aiohttp>=3.13.3",
+    "ruff>=0.15.0",
+    "freezegun>=1.5.5",
+    "hypothesis>=6.151.9",
+    "crosshair-tool>=0.0.106",
+    "icontract>=2.7.3",
 ]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# loadgroup honors @pytest.mark.xdist_group so same-group tests share one
+# worker (e.g. camoufox, which can only launch one Firefox at a time). Inert
+# when running without -n; behaves like the default load dist otherwise.
+addopts = ["--dist", "loadgroup"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "generative: marks tests that use hypothesis property-based testing",
+    "duplicate: marks tests that duplicate another test's assertion (for future cleanup)",
+]
+filterwarnings = [
+    "ignore:'count' is passed as positional argument:DeprecationWarning",
+    "ignore:websockets.legacy is deprecated:DeprecationWarning",
+    "ignore:websockets.server.WebSocketServerProtocol is deprecated:DeprecationWarning",
+]
+
+[tool.setuptools]
+[tool.setuptools.package-data]
+# The database engine's migrations include raw SQL alongside the .py steps.
+"jkent" = ["**/*.sql"]
+
+[tool.setuptools.packages.find]
+include = ["jkent*"]
+
+[tool.ruff]
+line-length = 79
+lint.extend-safe-fixes = [
+  # non-pep585-annotation
+  "UP006",
+]
+lint.select = [
+  # flake8-bugbear
+  "B",
+  # flake8-comprehensions
+  "C4",
+  # mccabe complexity
+  "C90",
+  # pycodestyle
+  "E",
+  # Pyflakes errors
+  "F",
+  # isort
+  "I",
+  # flake8-simplify
+  "SIM",
+  # import-outside-top-level — imports must be eager (top of file);
+  # targeted allowances use `# noqa: PLC0415` with a justification
+  "PLC0415",
+  # flake8-tidy-imports
+  "TID",
+  # pyupgrade
+  "UP",
+  # Pyflakes warnings
+  "W",
+]
+lint.mccabe.max-complexity = 39
+lint.per-file-ignores = { "tests/conftest.py" = [
+  # module-import-not-at-top: JKENT_ENFORCE_CONTRACTS must be set before
+  # any jkent import (contracts gate at decoration time)
+  "E402",
+] }
+lint.ignore = [
+  # flake8-bugbear opinionated rules
+  "B9",
+  # line-too-long
+  "E501",
+  # suppressible-exception
+  "SIM105",
+  # if-else-block-instead-of-if-exp
+  "SIM108",
+  # printf-string-formatting
+  "UP031",
+]
+
+[tool.mypy]
+[[tool.mypy.overrides]]
+module = []
+ignore_missing_imports = true
