@@ -25,6 +25,14 @@ behaviour (so a failure attributes cleanly):
 * :func:`test_repeated_get_params_match_browser` — a key submitted more than
   once on a GET form. Green since finding E was fixed (the queue folds GET
   params with ``urlencode(..., doseq=True)``, so repeated keys repeat).
+* :func:`test_duplicate_names_match_browser` — a key repeated by several
+  *distinct* controls sharing one name (not a checkbox group / multi-select).
+  Order-sensitive: ``find_form`` must accumulate every same-named control and
+  the repeats must survive POST body encoding in document order.
+* :func:`test_duplicate_fill_matches_browser` — overriding *some* of those
+  same-named controls via a positional ``data={name: [...]}`` list, with
+  ``None`` entries keeping a control's rendered default. Exercises the
+  repeated-field fill path and ``Form.submit``'s ``None`` resolution.
 
 All findings A–E are now fixed; every binding is a green regression guard.
 
@@ -106,9 +114,7 @@ def test_happy_path_matches_browser(harness: Harness, case: FormCase) -> None:
 
 @given(case=strat.cross_type_cases())
 @_SETTINGS
-def test_field_order_matches_browser(
-    harness: Harness, case: FormCase
-) -> None:
+def test_field_order_matches_browser(harness: Harness, case: FormCase) -> None:
     """Submitted fields should be in document order, as a browser sends them.
 
     Fixed (finding A): find_form collects all controls in one document-order
@@ -129,6 +135,37 @@ def test_repeated_get_params_match_browser(
     as repeated names (``q=a&q=b``) rather than one repr of the list.
     """
     _check(harness, case, ordered=False)
+
+
+@given(case=strat.duplicate_name_cases())
+@_SETTINGS
+def test_duplicate_names_match_browser(
+    harness: Harness, case: FormCase
+) -> None:
+    """Several distinct controls sharing one name submit like a browser.
+
+    Independent ``<input>``/``<textarea>`` elements that share a ``name`` repeat
+    that key once per element, in document order — distinct from a checkbox
+    group / multi-select (one control, many values). ``find_form`` must collect
+    every same-named control (finding A's one document-order pass) and the
+    repeats must survive POST body encoding intact.
+    """
+    _check(harness, case, ordered=True)
+
+
+@given(case=strat.duplicate_fill_cases())
+@_SETTINGS
+def test_duplicate_fill_matches_browser(
+    harness: Harness, case: FormCase
+) -> None:
+    """Positionally overriding some of several same-named controls matches.
+
+    ``Form.submit(data={name: [...]})`` fills repeated same-named controls in
+    order; a ``None`` entry keeps that control's rendered default. The HTTP
+    transport must encode the resolved repeats and the Playwright fill path must
+    type each override into the matching control — both identical to a browser.
+    """
+    _check(harness, case, ordered=True)
 
 
 @given(case=strat.disabled_cases())

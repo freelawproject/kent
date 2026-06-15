@@ -2,7 +2,7 @@
 
 Request.resolve_from() and Request.speculative() rebuild the Request by
 listing every field by hand. When a new field is added to Request (or
-BaseRequest) and not threaded through those constructors, it silently
+Request) and not threaded through those constructors, it silently
 resets to its default mid-chain — no error, just lost state.
 
 These tests are driven by dataclasses.fields(Request): adding a field
@@ -19,7 +19,7 @@ from jkent.data_types import (
     HTTPRequestParams,
     Request,
     Response,
-    XPath,
+    Selector,
 )
 
 # One non-default value per Request field. Fields the copy methods
@@ -48,7 +48,7 @@ FIELD_VALUES: dict[str, Any] = {
     "is_speculative": True,
     "speculation_id": ("by_id", 0, 7),
     "via": ViaLink(
-        XPath(selector="//a[1]"), description="link: Case"
+        selector=Selector.XPath("//a[1]"), description="link: Case"
     ),
     "bypass_rate_limit": True,
     "reseedable": True,
@@ -118,6 +118,7 @@ def test_every_field_survives_resolve_from():
     assert resolved.current_location == "https://example.com/list"
     assert resolved.parent_request is not None
     assert resolved.parent_request.continuation == "seed"
+
 
 def test_every_field_survives_speculative():
     original = make_full_request()
