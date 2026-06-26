@@ -20,6 +20,7 @@ dependencies = [
     # used via lxml's .cssselect()
     "cssselect",
     "pyrate-limiter>=3.9.0",
+    "typing-extensions>=4.15.0",
 ]
 authors = [{ name = "Free Law Project" }]
 license = "BSD-2-Clause"
